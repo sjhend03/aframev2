@@ -149,6 +149,11 @@ class AframeBase(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, _) -> None:
+        print(f"[DEBUG] validation batch (type: {type(batch)}):")
+        if isinstance(batch, (list, tuple)):
+            print(f"  len: {len(batch)}")
+            for i, item in enumerate(batch):
+                print(f"  batch[{i}]: {type(item)}, shape={getattr(item, 'shape', 'n/a')}")
         shift, X_bg, X_inj = batch
 
         y_bg = self.score(X_bg)
