@@ -12,34 +12,31 @@ class MultiModalPsd(SupervisedArchitecture):
     We pass the data through their own ResNets defined by their layers
     and context dims, then concatenate the output embeddings.
     """
-
     def __init__(
         self,
         num_ifos: int,
-        time_classes: int,
+        low_freq_classes: int,
+        high_freq_classes: int,
         freq_classes: int,
-        time_layers: list[int],
+        low_freq_layers: list[int],
+        high_freq_layers: list[int],
         freq_layers: list[int],
-        time_kernel_size: int = 3,
-        freq_kernel_size: int = 3,
-        zero_init_residual: bool = False,
-        groups: int = 1,
-        width_per_group: int = 64,
-        stride_type: Optional[list[Literal["stride", "dilation"]]] = None,
-        norm_layer: Optional[NormLayer] = None,
         **kwargs
     ):
         super().__init__()
-        self.time_domain_resnet = ResNet1D(
+
+        self.low_resnet = ResNet1D(
             in_channels=num_ifos,
-            layers=time_layers,
-            classes=time_classes,
-            kernel_size=time_kernel_size,
-            zero_init_residual=zero_init_residual,
-            groups=groups,
-            width_per_group=width_per_group,
-            stride_type=stride_type,
-            norm_layer=norm_layer,
+            layers=low_freq_layers,
+            classes=low_freq_classes,
+            kernel_size=3,
+        )
+
+        self.high_resnet = ResNet1d(
+            in_channels=num_ifos,
+            layers=high_freq_layers,
+            classes=high_freq_classes,
+            kernel_size=3,
         )
 
         self.freq_psd_resnet = ResNet1D(
@@ -54,10 +51,11 @@ class MultiModalPsd(SupervisedArchitecture):
             norm_layer=norm_layer,
         )
 
-        self.classifier = torch.nn.Linear(time_classes + freq_classes, 1)
+        self.classifier = torch.nn.Linear(low_freq_classes + high_freq_classes + freq_classes, 1)
 
     def forward(self, X, X_fft):
-        time_domain_output = self.time_domain_resnet(X)
-        freq_domain_output = self.freq_psd_resnet(X_fft)
-        concat = torch.cat([time_domain_output, freq_domain_output], dim=-1)
-        return self.classifier(concat)
+        low_out = self.low_resnet(X_low)
+        high_out = self.high_resnet(X_high)
+        freq_out = self.freq_resnet(X_fft)
+        x = torch.cat([low_out, high_out, freq_out], dim=-1)
+        return self.classifier(x)

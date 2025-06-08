@@ -3,6 +3,8 @@ from typing import Callable, Optional, Tuple
 import torch
 from ml4gw.transforms import SpectralDensity, Whiten
 from ml4gw.utils.slicing import unfold_windows
+import scipy.signal
+import numpy as np
 
 Tensor = torch.Tensor
 
@@ -177,3 +179,41 @@ class BatchWhitener(torch.nn.Module):
         if self.return_whitened:
             return x, whitened
         return x, x_fft
+
+def butter_bandpass_filter(data, lowcut=None, highcut=None, fs=4096, order=4):
+    """
+    Apply a Butterworth bandpass, highpass, or lowpass filter
+
+    Args:
+        data: np.ndarray, shape (..., time)
+        lowcut: float or None
+        hightcut: floar or None
+        fs: sampling rate
+        order: filter order
+    Returns:
+        Filtered data, same shape as input
+    Steven's Notes:
+    Doing a Butterworth bandpass filter rather than an fft and
+    hard cutoff is important for a few reasons. Doing a hard cutoff
+    with an fft would introduce ringing artifacts due to abrupt
+    cutoffs introduced which maybe fine for just two cutoffs but
+    diminishes the ability to expand. It also introduces a loss of 
+    continuity between time and frequency representations as you 
+    hard cut frequency. Aliasing also occurs but I am not entirely
+    sure why need to do MORE RESEARCH.
+    """
+    nyq = 0.5 * fs # Nyquist freq
+    if lowcut and highcut:
+        btype = 'bandpass'
+        Wn = [lowcut / nyq, highcut / nyq]
+    elif lowcut:
+        bytpe = 'highpass'
+        Wn = lowcut / nyq
+    elif highcut:
+        btype = 'lowpass'
+        Wn = highcut / nyq
+    else:
+        return data
+    sos = scipy.signal.butter(order, Wn, btype=btype, output='sos')
+    return scipy.signal.sosfiltfilt(sos, data, axis=-1)
+

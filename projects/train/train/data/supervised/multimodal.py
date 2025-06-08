@@ -1,7 +1,7 @@
 import torch
 
 from train.data.supervised.supervised import SupervisedAframeDataset
-
+from utils.preprocessing import butter_bandpass_filter
 
 class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
     def build_val_batches(self, background, signals):
@@ -50,17 +50,30 @@ class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
         X, y, psds = super().augment(X, waveforms)
         X = self.whitener(X, psds)
 
-        asds = psds**0.5
-        asds *= 1e23
+        X_low, X_high = self.split_frequency_components(X)
+
+        # existing FFT pipeline
+        asds = psds**0.5 * 1e23
         asds = asds.float()
 
         X_fft = torch.fft.rfft(X)
         num_freqs = X_fft.shape[-1]
         if asds.shape[-1] != num_freqs:
-            asds = torch.nn.functional.interpolate(
-                asds, size=(num_freqs,), mode="linear"
-            )
+            asds = F.interpolate(asds, size=(num_freqs,), mode="linear", align_corners=False)
         inv_asds = 1 / asds
         X_fft = torch.cat((X_fft.real, X_fft.imag, inv_asds), dim=1)
 
-        return (X, X_fft), y
+        return (X_low, X_high, X_fft), y
+
+    def split_frequency_components(self, X, fs=4096):
+        """
+        Takes a batch of time-domain data and returns
+        (low_freq, high_freq)
+        """
+        X_np = X.cpu().numpy() # (B, C, T)
+        low = butter_bandpass_filter(X_np, None, 100, fs)
+        high = butter_bandpass_filter(X_np, 100, None, fs)
+        return (
+            torch.tensor(low, dtype=X.dtype, device=X.device),
+            torch.tensor(high, dtype=X.dtype, device=X.device)
+        )
