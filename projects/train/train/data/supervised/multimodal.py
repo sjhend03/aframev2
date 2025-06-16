@@ -2,19 +2,35 @@ import torch
 
 from train.data.supervised.supervised import SupervisedAframeDataset
 from utils.preprocessing import butter_bandpass_filter
+import torch.nn.functional as F
 
 class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
     def build_val_batches(self, background, signals):
         X_bg, X_inj, psds = super().build_val_batches(background, signals)
         X_bg = self.whitener(X_bg, psds)
-        # whiten each view of injections
-        X_fg = []
-        for inj in X_inj:
-            inj = self.whitener(inj, psds)
-            X_fg.append(inj)
+        X_inj_whitened = [self.whitener(inj, psds) for inj in X_inj]
+        X_fg = torch.stack(X_inj_whitened)
 
-        X_fg = torch.stack(X_fg)
-        return X_bg, X_fg, psds
+        # Perform a split into high/low freqs
+        X_bg_low, X_bg_high = self.split_frequency_components(X_bg)
+        X_fg_low, X_fg_high = self.split_frequency_components(X_fg)
+
+        # FFT and ASD for injs
+        asds = psds**0.5 * 1e23
+        asds = asds.float()
+
+        X_bg_fft = torch.fft.rfft(X_bg)
+        X_fg_fft = torch.fft.rfft(X_fg)
+        num_freqs = X_bg_fft.shape[-1]
+        if asds.shape[-1] != num_freqs:
+            asds = F.interpolate(asds, size=(num_freqs,), mode="linear", align_corners=False)
+        inv_asds = 1 / asds
+
+        X_bg_fft = torch.cat((X_bg_fft.real, X_bg_fft.imag, inv_asds), dim=1)
+        X_fg_fft = torch.cat((X_fg_fft.real, X_fg_fft.imag, inv_asds), dim=1)
+
+        # Return all 3 branches for both fg and bg
+        return (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds
 
     def on_after_batch_transfer(self, batch, _):
         """
@@ -27,8 +43,9 @@ class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
         if self.trainer.training:
             # if we're training, perform random augmentations
             # on input data and use it to impact labels
-            [X], waveforms = batch
-            batch = self.augment(X, waveforms)
+            (X, waveforms) = batch
+            (X_low, X_high, X_fft), y = self.augment(X, waveforms)
+            return (X_low, X_high, X_fft), y
         elif self.trainer.validating or self.trainer.sanity_checking:
             # If we're in validation mode but we're not validating
             # on the local device, the relevant tensors will be
@@ -42,8 +59,9 @@ class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
             # much data from CPU to GPU. Once everything is
             # on-device, pre-inject signals into background.
             shift = self.timeslides[timeslide_idx].shift_size
-            X_bg, X_fg, psds = self.build_val_batches(background, signals)
-            batch = (shift, X_bg, X_fg, psds)
+            (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds = self.build_val_batches(background, signals)
+            # return everthing model and arch expect
+            return (shift, (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds)
         return batch
 
     def augment(self, X, waveforms):
