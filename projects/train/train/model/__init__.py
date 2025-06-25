@@ -6,3 +6,4 @@ from .supervised import (
     SupervisedMultiModalAframe,
 )
 from .multimodal import MultimodalSupervisedAframe
+from .export_wrappers import MultiModalExportWrapper

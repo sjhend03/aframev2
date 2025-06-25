@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 from train.data.supervised.supervised import SupervisedAframeDataset
 from utils.preprocessing import butter_bandpass_filter
 import torch.nn.functional as F
@@ -7,29 +7,39 @@ import torch.nn.functional as F
 class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
     def build_val_batches(self, background, signals):
         X_bg, X_inj, psds = super().build_val_batches(background, signals)
-        X_bg = self.whitener(X_bg, psds)
-        X_inj_whitened = [self.whitener(inj, psds) for inj in X_inj]
-        X_fg = torch.stack(X_inj_whitened)
-
+        num_freqs = psds.shape[-1]
+        freq_bins = np.linspace(0, self.hparams.sample_rate/2, num_freqs)
         # Perform a split into high/low freqs
-        X_bg_low, X_bg_high = self.split_frequency_components(X_bg)
-        X_fg_low, X_fg_high = self.split_frequency_components(X_fg)
-
+        X_bg_low = self.whitener(X_bg, psds, lowpass=self.hparams.lowpass, highpass=None)
+        X_bg_high = self.whitener(X_bg, psds, lowpass=None, highpass=self.hparams.highpass)
+        X_fg_low = []
+        X_fg_high = []
+        for inj in X_inj:
+            inj_low = self.whitener(inj, psds, lowpass=self.hparams.lowpass, highpass=None)
+            inj_high = self.whitener(inj, psds, lowpass=None, highpass=self.hparams.highpass)
+            X_fg_high.append(inj_high)
+            X_fg_low.append(inj_low)
+        X_fg_low = torch.stack(X_fg_low)
+        X_fg_high = torch.stack(X_fg_high)
         # FFT and ASD for injs
         asds = psds**0.5 * 1e23
         asds = asds.float()
 
         X_bg_fft = torch.fft.rfft(X_bg)
-        X_fg_fft = torch.fft.rfft(X_fg)
+        X_fg_fft = torch.fft.rfft(X_inj)
         num_freqs = X_bg_fft.shape[-1]
         if asds.shape[-1] != num_freqs:
             asds = F.interpolate(asds, size=(num_freqs,), mode="linear", align_corners=False)
         inv_asds = 1 / asds
-
+        if X_fg_fft.real.ndim == 4:  # (num_views, batch, channels, freq_bins)
+            num_views = X_fg_fft.real.shape[0]
+            # inv_asds: [batch, channels, freq_bins] → [1, batch, channels, freq_bins] → [num_views, batch, channels, freq_bins]
+            inv_asds_inj = inv_asds.unsqueeze(0).expand(num_views, -1, -1, -1)
+        else:
+            inv_asds_inj = inv_asds  # fallback for non-augmented case
         X_bg_fft = torch.cat((X_bg_fft.real, X_bg_fft.imag, inv_asds), dim=1)
-        X_fg_fft = torch.cat((X_fg_fft.real, X_fg_fft.imag, inv_asds), dim=1)
-
-        # Return all 3 branches for both fg and bg
+        X_fg_fft = torch.cat((X_fg_fft.real, X_fg_fft.imag, inv_asds_inj), dim=2)
+        # Return all 3 branches for both
         return (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds
 
     def on_after_batch_transfer(self, batch, _):
@@ -59,16 +69,18 @@ class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
             # much data from CPU to GPU. Once everything is
             # on-device, pre-inject signals into background.
             shift = self.timeslides[timeslide_idx].shift_size
-            (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds = self.build_val_batches(background, signals)
+            (X_bg_low, X_bg_high, X_bg_fft), (X_inj_low, X_inj_high, X_inj_fft), psds = self.build_val_batches(background, signals)
             # return everthing model and arch expect
-            return (shift, (X_bg_low, X_bg_high, X_bg_fft), (X_fg_low, X_fg_high, X_fg_fft), psds)
+            return (shift, (X_bg_low, X_bg_high, X_bg_fft), (X_inj_low, X_inj_high, X_inj_fft), psds)
         return batch
 
     def augment(self, X, waveforms):
-        X, y, psds = super().augment(X, waveforms)
-        X = self.whitener(X, psds)
+        if X.ndim == 4 and X.shape[0] == 1:
+            X = X.squeeze(0)
 
-        X_low, X_high = self.split_frequency_components(X)
+        X, y, psds = super().augment(X, waveforms)
+        X_low = self.whitener(X, psds, lowpass=self.hparams.lowpass, highpass=None)
+        X_high = self.whitener(X, psds, lowpass=None, highpass=self.hparams.highpass)
 
         # existing FFT pipeline
         asds = psds**0.5 * 1e23
@@ -82,16 +94,3 @@ class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
         X_fft = torch.cat((X_fft.real, X_fft.imag, inv_asds), dim=1)
 
         return (X_low, X_high, X_fft), y
-
-    def split_frequency_components(self, X, fs=4096):
-        """
-        Takes a batch of time-domain data and returns
-        (low_freq, high_freq)
-        """
-        X_np = X.cpu().numpy() # (B, C, T)
-        low = butter_bandpass_filter(X_np, None, 100, fs)
-        high = butter_bandpass_filter(X_np, 100, None, fs)
-        return (
-            torch.tensor(low, dtype=X.dtype, device=X.device),
-            torch.tensor(high, dtype=X.dtype, device=X.device)
-        )

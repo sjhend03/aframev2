@@ -79,6 +79,9 @@ class SaveAugmentedBatch(Callback):
             [X], waveforms = next(iter(trainer.train_dataloader))
             waveforms = trainer.datamodule.slice_waveforms(waveforms)
             X = X.to(device)
+            
+            result = trainer.datamodule.augment(X, waveforms)
+            print("AUGMENT RETURN:", result)
 
             (X, X_fft), y = trainer.datamodule.augment(X, waveforms)
 
@@ -145,3 +148,25 @@ class GradientTracker(Callback):
         norms = grad_norm(pl_module, norm_type=self.norm_type)
         total_norm = norms[f"grad_{float(self.norm_type)}_norm_total"]
         self.log(f"grad_norm_{self.norm_type}", total_norm)
+
+class SaveAugmentedBatchMultimodal(Callback):
+    def on_train_start(self, trainer, pl_module):
+        if trainer.global_rank == 0:
+            device = pl_module.device
+            save_dir = trainer.logger.save_dir
+
+            [X], waveforms = next(iter(trainer.train_dataloader))
+            waveforms = trainer.datamodule.slice_waveforms(waveforms)
+            X = X.to(device)
+
+            # Unpack for multimodal outputs
+            (X_low, X_high, X_fft), y = trainer.datamodule.augment(X, waveforms)
+
+            # Save as needed (example below for HDF5)
+            with h5py.File(os.path.join(save_dir, "batch_multimodal.h5"), "w") as f:
+                f["X_low"] = X_low.cpu().numpy()
+                f["X_high"] = X_high.cpu().numpy()
+                f["X_fft"] = X_fft.cpu().numpy()
+                f["y"] = y.cpu().numpy()
+            # ...etc. for val batches and so on.
+

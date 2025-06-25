@@ -33,19 +33,26 @@ class MultimodalSupervisedAframe(SupervisedAframe):
 
         y_bg = self.score((X_low_bg, X_high_bg, X_fft_bg))
 
-        if X_low_fg.ndim == 3: # (num_views, batch, ...)
-            num_views, batch_size, *_ = X_low_fg.shape
-            X_low_fg = X_low_fg.view(num_views * batch_size, *X_low_fg.shape[2:])
-            X_high_fg = X_high_fg.view(num_views * batch_size, *X_high_fg.shape[2:])
-            X_fft_fg = X_fft_fg.view(num_views * batch_size, *X_fft_fg.shape[2:])
+        if X_low_fg.ndim == 4:
+            num_views = X_low_fg.shape[0]
+            batch_size = X_low_fg.shape[1]   # <-- This is correct for X_low_fg, but for FFT, use X_fft_fg.shape[1]!
+            fft_batch_size = X_fft_fg.shape[1]  # <-- Use this for FFT branch
+            channels = X_low_fg.shape[2]
+            time = X_low_fg.shape[3]
+            fft_channels = X_fft_fg.shape[2]
+            freq_bins = X_fft_fg.shape[3]
+
+            # Reshape everything using the dimensions *they actually have*
+            X_low_fg = X_low_fg.view(num_views * batch_size, channels, time)
+            X_high_fg = X_high_fg.view(num_views * batch_size, channels, time)
+            X_fft_fg = X_fft_fg.view(num_views * fft_batch_size, fft_channels, freq_bins)
 
             y_fg = self.score((X_low_fg, X_high_fg, X_fft_fg))
-            y_fg = y_fg.view(num_views, batch_size).mean(0)
+            # When recovering for .mean(0), use fft_batch_size:
+            y_fg = y_fg.view(num_views, fft_batch_size).mean(0)
         else:
             y_fg = self.score((X_low_fg, X_high_fg, X_fft_fg))
-
         self.metric.update(shift, y_bg, y_fg)
-
         self.log(
             "valid_auroc",
             self.metric,
@@ -53,3 +60,4 @@ class MultimodalSupervisedAframe(SupervisedAframe):
             on_epoch=True,
             sync_dist=True,
         )
+    
