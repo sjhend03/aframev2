@@ -155,19 +155,19 @@ def export(
             size = batch_file["X_low"].shape[2:]
             size_high = batch_file["X_high"].shape[2:]
 
-            actual_batch = outputs[0].shape[0]  # after calling preprocessor w_low
-
             if size_high != size:
                 raise ValueError("Low and high input sizes do not match")
+
             input_shape_dict = {
-                "whitened_low": (expected_batch_size, num_ifos) + tuple(size),
-                "whitened_high": (expected_batch_size, num_ifos) + tuple(size_high),
+                "whitened_low": (batch_size, num_ifos) + tuple(size),
+                "whitened_high": (batch_size, num_ifos) + tuple(size_high),
             }
             if "X_fft" in batch_file.keys()
                 size_fft = batch_file["X_fft"].shape[-2:]
-                input_shape_dict["whitened_fft"] = (expected_batch_size,) + tuple(
+                input_shape_dict["whitened_fft"] = (batch_size,) + tuple(
                     size_fft
                 )
+
             multimodal = True
     # the network will have some different keyword
     # arguments required for export depending on
