@@ -139,18 +139,36 @@ def export(
 
     with open_file(batch_file, "rb") as f:
         batch_file = h5py.File(io.BytesIO(f.read()))
-        size = batch_file["X"].shape[2:]
-        if "X_fft" in batch_file.keys():
-            size_fft = batch_file["X_fft"].shape[-2:]
+        if "X" in batch_file.keys():
+            size = batch_file["X"].shape[2:]
+            if "X_fft" in batch_file.keys():
+                size_fft = batch_file["X_fft"].shape[-2:]
+            else:
+                size_fft = None
+            input_shape = (batch_size, num_ifos) + tuple(size)
+            input_shape_dict = {"whitened": input_shape}
+            if size_fft is not None:
+                input_shape_fft = (batch_size,) + tuple(size_fft)
+                input_shape_dict["whitened_fft"] = input_shape_fft
+            multimodal = False
         else:
-            size_fft = None
+            size = batch_file["X_low"].shape[2:]
+            size_high = batch_file["X_high"].shape[2:]
 
-    input_shape = (batch_size, num_ifos) + tuple(size)
-    input_shape_dict = {"whitened": input_shape}
-    if size_fft is not None:
-        input_shape_fft = (batch_size,) + tuple(size_fft)
-        input_shape_dict["whitened_fft"] = input_shape_fft
+            actual_batch = outputs[0].shape[0]  # after calling preprocessor w_low
 
+            if size_high != size:
+                raise ValueError("Low and high input sizes do not match")
+            input_shape_dict = {
+                "whitened_low": (expected_batch_size, num_ifos) + tuple(size),
+                "whitened_high": (expected_batch_size, num_ifos) + tuple(size_high),
+            }
+            if "X_fft" in batch_file.keys()
+                size_fft = batch_file["X_fft"].shape[-2:]
+                input_shape_dict["whitened_fft"] = (expected_batch_size,) + tuple(
+                    size_fft
+                )
+            multimodal = True
     # the network will have some different keyword
     # arguments required for export depending on
     # the target inference platform
@@ -185,9 +203,9 @@ def export(
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
         # if fftlength isn't specified, calculate the default value
         fftlength = fftlength or kernel_length + fduration
-        whitened, whitened_fft = add_streaming_input_preprocessor(
+        outputs = add_streaming_input_preprocessor(
             ensemble,
-            aframe.inputs["whitened"],
+            aframe.inputs["whitened" if not multimodal else "whitened_low"],
             psd_length=psd_length,
             sample_rate=sample_rate,
             kernel_length=kernel_length,
@@ -199,9 +217,18 @@ def export(
             lowpass=lowpass,
             preproc_instances=preproc_instances,
             streams_per_gpu=streams_per_gpu,
+            multimodal=multimodal,
         )
-        ensemble.pipe(whitened, aframe.inputs["whitened"])
-        ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
+
+        if multimodal:
+            w_low, w_high, w_fft = outputs
+            ensemble.pipe(w_low, aframe.inputs["whitened_low"])
+            ensemble.pipe(w_high, aframe.inputs["whitened_high"])
+            ensemble.pipe(w_fft, aframe.inputs["whitened_fft"])
+        else:
+            whitened, whitened_fft = outputs
+            ensemble.pipe(whitened, aframe.inputs["whitened"])
+            ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
 
         # export the ensemble model, which basically amounts
         # to writing its config and creating an empty version entry

@@ -88,7 +88,7 @@ class PsdEstimator(torch.nn.Module):
         # being used to calculate the psd to whiten the
         # 1st element. Used when we want to use raw background
         # data to calculate the PSDs to whiten data with injected signals
-        if X.ndim == 3 and X.size(0) == 2:
+        if X.ndim == 3 and X.size(0) == 2 and X.size(1) != 2:
             # 0th background element is used to calculate PSDs
             background = background[0]
             # 1st element is the data to be whitened
@@ -169,9 +169,10 @@ class BatchWhitener(torch.nn.Module):
         x_fft = torch.fft.rfft(x)
         num_freqs = x_fft.shape[-1]
         if asd.shape[-1] != num_freqs:
-            asd = torch.nn.functional.interpolate(
-                asd[None], size=(num_freqs,), mode="linear"
-            )
+            if asd.ndim == 2:
+                asd = asd.unsqueeze(0)  # [1, C, L]
+            asd = torch.nn.functional.interpolate(asd, size=num_freqs, mode="linear")
+            asd = asd.squeeze(0)  # back to [C, L]
         inv_asd = 1 / asd
         inv_asd = inv_asd.repeat(x_fft.shape[0], 1, 1)
         x_fft = torch.cat((x_fft.real, x_fft.imag, inv_asd), dim=1)
@@ -179,41 +180,151 @@ class BatchWhitener(torch.nn.Module):
         if self.return_whitened:
             return x, whitened
         return x, x_fft
-
-def butter_bandpass_filter(data, lowcut=None, highcut=None, fs=4096, order=4):
+def butter_bandpass_filter(
+    data, 
+    lowcut: float = None, 
+    highcut: float = None, 
+    fs: int = 4096, 
+    order: int = 4
+):
     """
-    Apply a Butterworth bandpass, highpass, or lowpass filter
+    Apply a Butterworth bandpass, highpass, or lowpass filter.
 
     Args:
         data: np.ndarray, shape (..., time)
+            The input data to be filtered.
         lowcut: float or None
-        hightcut: floar or None
-        fs: sampling rate
-        order: filter order
+            Low cutoff frequency in Hz. If None, no low cutoff is applied.
+        highcut: float or None
+            High cutoff frequency in Hz. If None, no high cutoff is applied.
+        fs: int
+            Sampling rate in Hz.
+        order: int
+            Order of the Butterworth filter.
+
     Returns:
-        Filtered data, same shape as input
+        Filtered data, same shape as input.
+
     Steven's Notes:
-    Doing a Butterworth bandpass filter rather than an fft and
+    Doing a Butterworth bandpass filter rather than an FFT and
     hard cutoff is important for a few reasons. Doing a hard cutoff
-    with an fft would introduce ringing artifacts due to abrupt
-    cutoffs introduced which maybe fine for just two cutoffs but
-    diminishes the ability to expand. It also introduces a loss of 
-    continuity between time and frequency representations as you 
-    hard cut frequency. Aliasing also occurs but I am not entirely
-    sure why need to do MORE RESEARCH.
+    with an FFT would introduce ringing artifacts due to abrupt
+    cutoffs, which may be fine for just two cutoffs but diminishes
+    the ability to expand. It also introduces a loss of continuity
+    between time and frequency representations as you hard cut
+    frequency. Aliasing also occurs but I am not entirely sure why—
+    need to do MORE RESEARCH.
     """
-    nyq = 0.5 * fs # Nyquist freq
-    if lowcut and highcut:
-        btype = 'bandpass'
+    nyq = 0.5 * fs  # Nyquist frequency
+
+    if lowcut is not None and highcut is not None:
+        btype = 'band'
         Wn = [lowcut / nyq, highcut / nyq]
-    elif lowcut:
-        bytpe = 'highpass'
+    elif lowcut is not None:
+        btype = 'high'
         Wn = lowcut / nyq
-    elif highcut:
-        btype = 'lowpass'
+    elif highcut is not None:
+        btype = 'low'
         Wn = highcut / nyq
     else:
         return data
+
     sos = scipy.signal.butter(order, Wn, btype=btype, output='sos')
     return scipy.signal.sosfiltfilt(sos, data, axis=-1)
 
+class MultiModalBatchWhitener(torch.nn.Module):
+    """Whitener that outputs low/high bandpass kernels and an FFT"""
+
+    def __init__(
+        self,
+        kernel_length: float,
+        sample_rate: float,
+        inference_sampling_rate: float,
+        batch_size: int,
+        fduration: float,
+        fftlength: float,
+        augmentor: Optional[Callable] = None,
+        highpass: Optional[float] = None,
+        lowpass: Optional[float] = None,
+    ) -> None:
+        super().__init__()
+
+        self.stride_size = int(sample_rate / inference_sampling_rate)
+        self.kernel_size = int(kernel_length * sample_rate)
+        self.augmentor = augmentor
+
+        strides = (batch_size - 1) * self.stride_size
+        fsize = int(fduration * sample_rate)
+        size = strides + self.kernel_size + fsize
+        length = size / sample_rate
+        self.psd_estimator = PsdEstimator(
+            length,
+            sample_rate,
+            fftlength=fftlength,
+            overlap=None,
+            average="median",
+            fast=highpass is not None,
+        )
+        self.low_whitener = Whiten(fduration, sample_rate, None, lowpass)
+        self.high_whitener = Whiten(fduration, sample_rate, highpass, None)
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        print(f"Incoming x shape: {x.shape}")
+        if x.ndim ==3:
+            num_channels = x.size(1)
+        elif x.ndim == 2:
+            num_channels = x.size(0)
+        else:
+            msg = (
+                "Expected input to either be 2 or 3 dimensional, "
+                f"but found shape {x.shape}"
+            )
+            raise ValueError(msg)
+
+        x, psd = self.psd_estimator(x)
+
+        low = self.low_whitener(x.double(), psd)
+        high = self.high_whitener(x.double(), psd)
+
+        low = unfold_windows(low, self.kernel_size, self.stride_size)
+        low = low.reshape(-1, num_channels, self.kernel_size)
+        high = unfold_windows(high, self.kernel_size, self.stride_size)
+        high = high.reshape(-1, num_channels, self.kernel_size)
+
+        if self.augmentor is not None:
+            low = self.augmentor(low)
+            high = self.augmentor(high)
+
+        asd = psd**0.5
+        asd *= 1e23
+        asd = asd.float()
+
+        x_fft = torch.fft.rfft(x)
+        num_freqs = x_fft.shape[-1]
+        if asd.shape[-1] != num_freqs:
+            if asd.ndim == 2:
+                # [C, F] → [1, C, F]
+                asd = asd.unsqueeze(0)
+            elif asd.ndim == 1:
+                # [F] → [1, 1, F]
+                asd = asd.unsqueeze(0).unsqueeze(0)
+            # Interpolate across frequency dimension
+            asd = torch.nn.functional.interpolate(asd, size=num_freqs, mode="linear")
+            # Back to [C, F]
+            asd = asd.squeeze(0)
+
+        inv_asd = 1 / asd
+
+        batch, freq_bins = x_fft.shape[0], x_fft.shape[-1]
+        num_ifos = inv_asd.shape[1]
+        x_real = x_fft.real.view(batch, num_ifos, freq_bins)
+        x_imag = x_fft.imag.view(batch, num_ifos, freq_bins)
+
+        if inv_asd.ndim == 2:
+            inv_asd = inv_asd.unsqueeze(0).repeat(x_fft.shape[0], 1, 1)
+        elif inv_asd.shape[0] != x_fft.shape[0]:
+            raise ValueError(f"inv_asd shape {inv_asd.shape} does not match x_fft batch {x_fft.shape[0]}")
+
+        x_fft_input = torch.cat([x_real, x_imag, inv_asd], dim=1)
+
+        return low, high, x_fft_input

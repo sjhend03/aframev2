@@ -4,7 +4,11 @@ from hermes.quiver import Platform
 from hermes.quiver.streaming import utils as streaming_utils
 from ml4gw.transforms import SingleQTransform
 
-from utils.preprocessing import BackgroundSnapshotter, BatchWhitener
+from utils.preprocessing import (
+    BackgroundSnapshotter,
+    BatchWhitener,
+    MultiModalBatchWhitener,
+)
 
 if TYPE_CHECKING:
     from hermes.quiver.model import EnsembleModel, ExposedTensor
@@ -36,6 +40,7 @@ def add_streaming_input_preprocessor(
     lowpass: Optional[float] = None,
     preproc_instances: Optional[int] = None,
     streams_per_gpu: int = 1,
+    multimodal: bool = False,
 ) -> "ExposedTensor":
     """Create a snapshotter model and add it to the repository"""
 
@@ -78,7 +83,8 @@ def add_streaming_input_preprocessor(
         streams_per_gpu=streams_per_gpu,
     )
     ensemble.add_input(streaming_model.inputs["stream"])
-    preprocessor = BatchWhitener(
+    whitener_cls = MultiModalBatchWhitener if multimodal else BatchWhitener
+    preprocessor = whitener_cls(
         kernel_length=kernel_length,
         sample_rate=sample_rate,
         batch_size=batch_size,
@@ -98,15 +104,25 @@ def add_streaming_input_preprocessor(
         scale_model(preproc_model, preproc_instances)
 
     input_shape = streaming_model.outputs["strain"].shape
+    if multimodal:
+        output_names = ["whitened_low", "whitened_high", "whitened_fft"]
+    else:
+        output_names = ["whitened", "whitened_fft"]
     preproc_model.export_version(
         preprocessor,
         input_shapes={"strain": input_shape},
-        output_names=["whitened", "whitened_fft"],
+        output_names=output_names,
     )
     ensemble.pipe(
         streaming_model.outputs["strain"],
         preproc_model.inputs["strain"],
     )
+    if multimodal:
+        return (
+            preproc_model.outputs["whitened_low"],
+            preproc_model.outputs["whitened_high"],
+            preproc_model.outputs["whitened_fft"],
+        )
     return (
         preproc_model.outputs["whitened"],
         preproc_model.outputs["whitened_fft"],
