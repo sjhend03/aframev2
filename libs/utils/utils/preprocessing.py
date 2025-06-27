@@ -204,6 +204,8 @@ class MultiModalBatchWhitener(torch.nn.Module):
         self.stride_size = int(sample_rate / inference_sampling_rate)
         self.kernel_size = int(kernel_length * sample_rate)
         self.augmentor = augmentor
+        self.batch_size = batch_size
+        self.filter_size = int(fduration * sample_rate)
 
         strides = (batch_size - 1) * self.stride_size
         fsize = int(fduration * sample_rate)
@@ -240,6 +242,8 @@ class MultiModalBatchWhitener(torch.nn.Module):
             if psd.ndim == 3:
                 psd = psd[1]
 
+        x = x[..., self.filter_size:]
+
         low = self.low_whitener(x.double(), psd)
         high = self.high_whitener(x.double(), psd)
 
@@ -247,6 +251,9 @@ class MultiModalBatchWhitener(torch.nn.Module):
         low = low.reshape(-1, num_channels, self.kernel_size)
         high = unfold_windows(high, self.kernel_size, self.stride_size)
         high = high.reshape(-1, num_channels, self.kernel_size)
+
+        low = low[-self.batch_size :]
+        high = high[-self.batch_size :]
 
         if self.augmentor is not None:
             low = self.augmentor(low)
@@ -287,5 +294,7 @@ class MultiModalBatchWhitener(torch.nn.Module):
             )
 
         x_fft_input = torch.cat([x_real, x_imag, inv_asd], dim=1)
+
+        x_fft_input = x_fft_input[-self.batch_size :]
 
         return low, high, x_fft_input
