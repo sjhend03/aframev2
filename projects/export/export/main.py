@@ -162,7 +162,7 @@ def export(
                 "whitened_low": (batch_size, num_ifos) + tuple(size),
                 "whitened_high": (batch_size, num_ifos) + tuple(size_high),
             }
-            if "X_fft" in batch_file.keys()
+            if "X_fft" in batch_file.keys():
                 size_fft = batch_file["X_fft"].shape[-2:]
                 input_shape_dict["whitened_fft"] = (batch_size,) + tuple(
                     size_fft

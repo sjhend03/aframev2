@@ -235,6 +235,11 @@ class MultiModalBatchWhitener(torch.nn.Module):
 
         x, psd = self.psd_estimator(x)
 
+        if x.dim == 3 and x.size(0) == 2:
+            x = x[1]
+            if psd.ndim == 3:
+                psd = psd[1]
+
         low = self.low_whitener(x.double(), psd)
         high = self.high_whitener(x.double(), psd)
 
