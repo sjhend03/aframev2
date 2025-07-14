@@ -22,7 +22,7 @@ dependencies = [
     "fsspec[s3]>=2024,<2025",
     "urllib3>=1.25.4,<1.27",
     "utils",
-    "ml4gw>=0.7.2",
+    "ml4gw",
     "aframe",
     "ledger",
     "architectures",
@@ -53,6 +53,7 @@ utils = { path = "../../libs/utils", editable = true }
 aframe = { path = "../..", editable = true }
 ledger = { path = "../../libs/ledger", editable = true }
 architectures = { path = "../../libs/architectures", editable = true }
+ml4gw = { path = "../../../ml4gw", editable = true }
 
 [build-system]
 requires = ["hatchling"]

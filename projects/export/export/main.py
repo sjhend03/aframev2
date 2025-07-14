@@ -116,10 +116,26 @@ def export(
     logging.info("Initializing model graph")
 
     with open_file(weights, "rb") as f:
-        graph = nn = torch.jit.load(f, map_location="cpu")
+        file_bytes = f.read()
+
+    if weights.endswith(".pt"):
+        logging.info("Detected raw PyTorch model (.pt), tracing to TorchScript...")
+        model = torch.load(io.BytesIO(file_bytes), map_location="cpu")
+        model.eval()
+
+        # Create dummy input to trace (based on your batch.h5 structure)
+        dummy_input = (
+            torch.randn(1, 2, 3072),
+            torch.randn(1, 2, 3072),
+            torch.randn(1, 6, 2561),
+        )
+        graph = torch.jit.trace(model, dummy_input)
+    else:
+        graph = torch.jit.load(io.BytesIO(file_bytes), map_location="cpu")
 
     graph.eval()
-    logging.info(f"Initialize:\n{nn}")
+    nn = graph
+    logging.info(f"Initialized model:\n{nn}")
 
     # instantiate a model repository at the
     # indicated location. Split up the preprocessor
@@ -201,8 +217,9 @@ def export(
     except KeyError:
         # if we don't, create one
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
-        # if fftlength isn't specified, calculate the default value
-        fftlength = fftlength or kernel_length + fduration
+        # Force FFT length to match training data (≈2561 bins from 5120 samples)
+        if fftlength is None:
+            fftlength = 2.5  # in seconds, assuming 2048 Hz sample rate
         outputs = add_streaming_input_preprocessor(
             ensemble,
             aframe.inputs["whitened" if not multimodal else "whitened_low"],
@@ -218,6 +235,7 @@ def export(
             preproc_instances=preproc_instances,
             streams_per_gpu=streams_per_gpu,
             multimodal=multimodal,
+            batch_size=batch_size,
         )
 
         if multimodal:

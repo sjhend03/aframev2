@@ -32,6 +32,7 @@ def add_streaming_input_preprocessor(
     psd_length: float,
     sample_rate: float,
     kernel_length: float,
+    batch_size: int,
     inference_sampling_rate: float,
     fduration: float,
     fftlength: float,
@@ -44,7 +45,7 @@ def add_streaming_input_preprocessor(
 ) -> "ExposedTensor":
     """Create a snapshotter model and add it to the repository"""
 
-    batch_size, num_ifos, *kernel_size = input.shape
+    _, num_ifos, *kernel_size = input.shape
     if q is not None:
         if len(kernel_size) != 2:
             raise ValueError(
@@ -69,8 +70,9 @@ def add_streaming_input_preprocessor(
     )
 
     stride = int(sample_rate / inference_sampling_rate)
-    state_shape = (2, num_ifos, snapshotter.state_size)
-    input_shape = (2, num_ifos, batch_size * stride)
+    state_shape = (batch_size, num_ifos, snapshotter.state_size)
+    input_shape = (batch_size, num_ifos, int(kernel_length * sample_rate))
+
     streaming_model = streaming_utils.add_streaming_model(
         ensemble.repository,
         streaming_layer=snapshotter,

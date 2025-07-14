@@ -263,7 +263,7 @@ class MultiModalBatchWhitener(torch.nn.Module):
         asd *= 1e23
         asd = asd.float()
 
-        x_fft = torch.fft.rfft(x)
+        x_fft = torch.fft.rfft(x[..., -5120:])
         num_freqs = x_fft.shape[-1]
         if asd.shape[-1] != num_freqs:
             if asd.ndim == 2:

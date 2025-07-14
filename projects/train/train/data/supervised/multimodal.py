@@ -1,14 +1,12 @@
 import torch
 import numpy as np
 from train.data.supervised.supervised import SupervisedAframeDataset
-from utils.preprocessing import butter_bandpass_filter
 import torch.nn.functional as F
 
 class MultiModalSupervisedAframeDataset(SupervisedAframeDataset):
     def build_val_batches(self, background, signals):
         X_bg, X_inj, psds = super().build_val_batches(background, signals)
         num_freqs = psds.shape[-1]
-        freq_bins = np.linspace(0, self.hparams.sample_rate/2, num_freqs)
         # Perform a split into high/low freqs
         X_bg_low = self.whitener(X_bg, psds, lowpass=self.hparams.lowpass, highpass=None)
         X_bg_high = self.whitener(X_bg, psds, lowpass=None, highpass=self.hparams.highpass)
