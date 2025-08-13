@@ -101,10 +101,14 @@ def add_streaming_input_preprocessor(
     preproc_model.export_version(
         preprocessor,
         input_shapes={"strain": input_shape},
-        output_names=["whitened"],
+        output_names=["whitened_low", "whitened_high", "whitened_fft"],
     )
     ensemble.pipe(
         streaming_model.outputs["strain"],
         preproc_model.inputs["strain"],
     )
-    return preproc_model.outputs["whitened"]
+    return (
+        preproc_model.outputs["whitened_low"],
+        preproc_model.outputs["whitened_high"],
+        preproc_model.outputs["whitened_fft"],
+    )

@@ -139,9 +139,37 @@ def export(
 
     with open_file(batch_file, "rb") as f:
         batch_file = h5py.File(io.BytesIO(f.read()))
-        size = batch_file["X"].shape[2:]
+        if "X" in batch_file.keys():
+            size = batch_file["X"].shape[2:]
+        else:
+            size = None
+        if "X_fft" in batch_file.keys():
+            size_fft = batch_file["X_fft"].shape[-2:]
+        else: 
+            size_fft = None
+        if "X_low" in batch_file.keys():
+            size_low = batch_file["X_low"].shape[2:]
+        else: 
+            size_low = None
+        if "X_high" in batch_file.keys():
+            size_high = batch_file["X_high"].shape[2:]
+        else: 
+            size_high = None
 
-    input_shape = (batch_size, num_ifos) + tuple(size)
+    input_shape_dict = {}
+    if size is not None:
+        input_shape = (batch_size, num_ifos) + tuple(size)
+        input_shape_dict["whitened"] = input_shape
+    if size_low is not None:
+        input_shape_low = (batch_size, num_ifos) + tuple(size_low)
+        input_shape_dict["whitened_low"] = input_shape_low
+    if size_high is not None:
+        input_shape_high = (batch_size, num_ifos) + tuple(size_high)
+        input_shape_dict["whitened_high"] = input_shape_high
+    if size_fft is not None:
+        input_shape_fft = (batch_size,) + tuple(size_fft)
+        input_shape_dict["whitened_fft"] = input_shape_fft
+
     # the network will have some different keyword
     # arguments required for export depending on
     # the target inference platform
@@ -159,7 +187,7 @@ def export(
 
     aframe.export_version(
         graph,
-        input_shapes={"whitened": input_shape},
+        input_shapes=input_shape_dict,
         output_names=["discriminator"],
         **kwargs,
     )
@@ -176,7 +204,7 @@ def export(
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
         # if fftlength isn't specified, calculate the default value
         fftlength = fftlength or kernel_length + fduration
-        whitened = add_streaming_input_preprocessor(
+        whitened_low, whitened_high, whitened_fft = add_streaming_input_preprocessor(
             ensemble,
             aframe.inputs["whitened"],
             psd_length=psd_length,
@@ -191,7 +219,9 @@ def export(
             preproc_instances=preproc_instances,
             streams_per_gpu=streams_per_gpu,
         )
-        ensemble.pipe(whitened, aframe.inputs["whitened"])
+        ensemble.pipe(whitened_low, aframe.inputs["whitened_low"])
+        ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])
+        ensemble.pipe(whitened_low, aframe.inputs["whitened_fft"])
 
         # export the ensemble model, which basically amounts
         # to writing its config and creating an empty version entry
