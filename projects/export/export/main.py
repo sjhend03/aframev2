@@ -115,28 +115,12 @@ def export(
     # load in the model graph
     logging.info("Initializing model graph")
 #UNCOMMENT BELOW FOR ACTUAL RUN
-    #with open_file(weights, "rb") as f:
-    #    graph = nn = torch.jit.load(f, map_location="cpu")
-# REMOVE BELOW FOR ACTUAL RUN
-    if weights.endswith(".ckpt"):
-        from train.model.multimodal import MultimodalAframe  # or whatever class wraps your arch
-
-        repo = qv.ModelRepository(repository_directory, clean=clean)
-        try:
-            aframe = repo.models["aframe"]
-        except KeyError:
-            aframe = repo.add("aframe", platform=platform)
-
-        if aframe_instances is not None:
-            scale_model(aframe, aframe_instances)
-
-        ckpt_model = MultimodalAframe.load_from_checkpoint(weights)
-        graph = ckpt_model.arch
+    with open_file(weights, "rb") as f:
+        graph = nn = torch.jit.load(f, map_location="cpu")
 
 #UNCOMMENT ON ACTUAL RUN
-    #graph.eval()
-    logging.info(f"Initialize:\n{graph}")
-    #logging.info(f"Initialize:\n{nn}")
+    graph.eval()
+    logging.info(f"Initialize:\n{nn}")
     # instantiate a model repository at the
     # indicated location. Split up the preprocessor
     # and the neural network (which we'll call aframe)
@@ -173,9 +157,6 @@ def export(
             size_high = None
 
     input_shape_dict = {}
-    if size is not None:
-        input_shape = (batch_size, num_ifos) + tuple(size)
-        input_shape_dict["whitened"] = input_shape
     if size_low is not None:
         input_shape_low = (batch_size, num_ifos) + tuple(size_low)
         input_shape_dict["whitened_low"] = input_shape_low
@@ -220,9 +201,11 @@ def export(
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
         # if fftlength isn't specified, calculate the default value
         fftlength = fftlength or kernel_length + fduration
+        print("Aframe model inputs:", list(aframe.inputs.keys()))
+        print("Aframe model outputs:", list(aframe.outputs.keys()))
         whitened_low, whitened_high, whitened_fft = add_streaming_input_preprocessor(
             ensemble,
-            aframe.inputs["whitened"],
+            aframe.inputs["whitened_low"],
             psd_length=psd_length,
             sample_rate=sample_rate,
             kernel_length=kernel_length,
