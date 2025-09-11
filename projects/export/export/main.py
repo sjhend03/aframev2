@@ -117,6 +117,10 @@ def export(
 #UNCOMMENT BELOW FOR ACTUAL RUN
     with open_file(weights, "rb") as f:
         graph = nn = torch.jit.load(f, map_location="cpu")
+        print(graph)
+        print(graph.forward)
+        print(graph.forward.__doc__)
+
 
 #UNCOMMENT ON ACTUAL RUN
     graph.eval()
@@ -139,6 +143,8 @@ def export(
 
     with open_file(batch_file, "rb") as f:
         batch_file = h5py.File(io.BytesIO(f.read()))
+        print("BATCH GILE XFFT SHAPE")
+        print(batch_file["X_fft"].shape)
         if "X" in batch_file.keys():
             size = batch_file["X"].shape[2:]
         else:
@@ -172,7 +178,24 @@ def export(
     # the target inference platform
     # TODO: hardcoding these kwargs for now, but worth
     # thinking about a more robust way to handle this
-    kwargs = {}
+    with open_file(batch_file, "rb") as f:
+        batch_file = h5py.File(io.BytesIO(f.read()))
+        if "X" in batch_file.keys():
+            size = batch_file["X"].shape[2:]
+        else:
+            size = None
+        if "X_fft" in batch_file.keys():
+            size_fft = batch_file["X_fft"].shape[-2:]
+        else:
+            size_fft = None
+        if "X_low" in batch_file.keys():
+            size_low = batch_file["X_low"].shape[2:]
+        else:
+            size_low = None
+        if "X_high" in batch_file.keys():
+            size_high = batch_file["X_high"].shape[2:]
+        else:
+            size_high = None
     if platform == qv.Platform.ONNX:
         kwargs["opset_version"] = 13
 
@@ -220,7 +243,7 @@ def export(
         )
         ensemble.pipe(whitened_low, aframe.inputs["whitened_low"])
         ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])
-        ensemble.pipe(whitened_low, aframe.inputs["whitened_fft"])
+        ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
 
         # export the ensemble model, which basically amounts
         # to writing its config and creating an empty version entry
