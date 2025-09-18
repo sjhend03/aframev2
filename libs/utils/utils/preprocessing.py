@@ -134,32 +134,3 @@ class BatchWhitener(torch.nn.Module):
         )
         self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
 
-    def forward(self, x: Tensor) -> Tensor:
-        # Get the number of channels so we know how to
-        # reshape `x` appropriately after unfolding to
-        # ensure we have (batch, channels, time) shape
-        if x.ndim == 3:
-            num_channels = x.size(1)
-        elif x.ndim == 2:
-            num_channels = x.size(0)
-        else:
-            raise ValueError(
-                "Expected input to be either 2 or 3 dimensional, "
-                "but found shape {}".format(x.shape)
-            )
-
-        x, psd = self.psd_estimator(x)
-        whitened = self.whitener(x.double(), psd)
-
-        # unfold x and then put it into the expected shape.
-        # Note that if x has both signal and background
-        # batch elements, they will be interleaved along
-        # the batch dimension after unfolding
-        x = unfold_windows(whitened, self.kernel_size, self.stride_size)
-        x = x.reshape(-1, num_channels, self.kernel_size)
-        if self.augmentor is not None:
-            x = self.augmentor(x)
-
-        if self.return_whitened:
-            return x, whitened
-        return x

@@ -142,23 +142,23 @@ def export(
         scale_model(aframe, aframe_instances)
 
     with open_file(batch_file, "rb") as f:
-        batch_file = h5py.File(io.BytesIO(f.read()))
+        batch = h5py.File(io.BytesIO(f.read()))
         print("BATCH GILE XFFT SHAPE")
-        print(batch_file["X_fft"].shape)
-        if "X" in batch_file.keys():
-            size = batch_file["X"].shape[2:]
+        print(batch["X_fft"].shape)
+        if "X" in batch.keys():
+            size = batch["X"].shape[2:]
         else:
             size = None
-        if "X_fft" in batch_file.keys():
-            size_fft = batch_file["X_fft"].shape[-2:]
+        if "X_fft" in batch.keys():
+            size_fft = batch["X_fft"].shape[-2:]
         else: 
             size_fft = None
-        if "X_low" in batch_file.keys():
-            size_low = batch_file["X_low"].shape[2:]
+        if "X_low" in batch.keys():
+            size_low = batch["X_low"].shape[2:]
         else: 
             size_low = None
-        if "X_high" in batch_file.keys():
-            size_high = batch_file["X_high"].shape[2:]
+        if "X_high" in batch.keys():
+            size_high = batch["X_high"].shape[2:]
         else: 
             size_high = None
 
@@ -178,32 +178,6 @@ def export(
     # the target inference platform
     # TODO: hardcoding these kwargs for now, but worth
     # thinking about a more robust way to handle this
-    with open_file(batch_file, "rb") as f:
-        batch_file = h5py.File(io.BytesIO(f.read()))
-        if "X" in batch_file.keys():
-            size = batch_file["X"].shape[2:]
-        else:
-            size = None
-        if "X_fft" in batch_file.keys():
-            size_fft = batch_file["X_fft"].shape[-2:]
-        else:
-            size_fft = None
-        if "X_low" in batch_file.keys():
-            size_low = batch_file["X_low"].shape[2:]
-        else:
-            size_low = None
-        if "X_high" in batch_file.keys():
-            size_high = batch_file["X_high"].shape[2:]
-        else:
-            size_high = None
-    if platform == qv.Platform.ONNX:
-        kwargs["opset_version"] = 13
-
-        # turn off graph optimization because of this error
-        # https://github.com/triton-inference-server/server/issues/3418
-        aframe.config.optimization.graph.level = -1
-    elif platform == qv.Platform.TENSORRT:
-        kwargs["use_fp16"] = False
 
     aframe.export_version(
         graph,
@@ -212,23 +186,19 @@ def export(
         **kwargs,
     )
 
-    # now try to create an ensemble that has a snapshotter
-    # at the front for streaming new data to
     ensemble_name = "aframe-stream"
+
     try:
         # first see if we have an existing
         # ensemble with the given name
         ensemble = repo.models[ensemble_name]
     except KeyError:
-        # if we don't, create one
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
-        # if fftlength isn't specified, calculate the default value
+        # If fft isn't specified, calculate default value
         fftlength = fftlength or kernel_length + fduration
-        print("Aframe model inputs:", list(aframe.inputs.keys()))
-        print("Aframe model outputs:", list(aframe.outputs.keys()))
         whitened_low, whitened_high, whitened_fft = add_streaming_input_preprocessor(
             ensemble,
-            aframe.inputs["whitened_low"],
+            aframe.inputs["whitened"],
             psd_length=psd_length,
             sample_rate=sample_rate,
             kernel_length=kernel_length,
@@ -245,8 +215,6 @@ def export(
         ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])
         ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
 
-        # export the ensemble model, which basically amounts
-        # to writing its config and creating an empty version entry
         ensemble.add_output(aframe.outputs["discriminator"])
         ensemble.export_version(None)
     else:
@@ -258,8 +226,7 @@ def export(
                 "Ensemble model '{}' already in repository "
                 "but doesn't include model 'aframe'".format(ensemble_name)
             )
-        # TODO: checks for snapshotter and preprocessor
-
+    # TODO: checks for snapshotter and preprocessor
     # keep snapshot states around for a long time in case there are
     # unexpected bottlenecks which throttle update for a few seconds
     snapshotter = repo.models["snapshotter"]
