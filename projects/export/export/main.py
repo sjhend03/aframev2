@@ -117,9 +117,6 @@ def export(
 #UNCOMMENT BELOW FOR ACTUAL RUN
     with open_file(weights, "rb") as f:
         graph = nn = torch.jit.load(f, map_location="cpu")
-        print(graph)
-        print(graph.forward)
-        print(graph.forward.__doc__)
 
 
 #UNCOMMENT ON ACTUAL RUN
@@ -143,8 +140,7 @@ def export(
 
     with open_file(batch_file, "rb") as f:
         batch = h5py.File(io.BytesIO(f.read()))
-        print("BATCH GILE XFFT SHAPE")
-        print(batch["X_fft"].shape)
+        print("BATCH FFT SHAPE: ", batch["X_fft"].shape)
         if "X" in batch.keys():
             size = batch["X"].shape[2:]
         else:
@@ -185,9 +181,7 @@ def export(
         output_names=["discriminator"],
         **kwargs,
     )
-
-    ensemble_name = "aframe-stream"
-
+    ensemble_name = "aframe-multistream"
     try:
         # first see if we have an existing
         # ensemble with the given name
@@ -198,7 +192,7 @@ def export(
         fftlength = fftlength or kernel_length + fduration
         whitened_low, whitened_high, whitened_fft = add_streaming_input_preprocessor(
             ensemble,
-            aframe.inputs["whitened"],
+            aframe.inputs["whitened_low"],
             psd_length=psd_length,
             sample_rate=sample_rate,
             kernel_length=kernel_length,
@@ -211,6 +205,8 @@ def export(
             preproc_instances=preproc_instances,
             streams_per_gpu=streams_per_gpu,
         )
+        print("Preprocessor output shape:", whitened_fft.shape)
+        print("Model expected shape:", aframe.inputs["whitened_fft"].shape)
         ensemble.pipe(whitened_low, aframe.inputs["whitened_low"])
         ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])
         ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
