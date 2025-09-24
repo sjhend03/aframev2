@@ -67,15 +67,6 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
         self.classifier = nn.Linear(embed_dim, 1)
 
     def forward(self, x_low: torch.Tensor, x_high: torch.Tensor, x_fft: torch.Tensor):
-        if x_low.ndim == 4:
-            # [num_views, batch, C, L] -> [num_views * batch, C, L]
-            x_low = x_low.flatten(0, 1)
-            x_high = x_high.flatten(0, 1)
-            x_fft = x_fft.flatten(0, 1)
-
-        assert x_low.shape[1] == self.strain_low_resnet.conv1.in_channels, f"x_low has wrong shape: {x_low.shape}"
-        assert x_high.shape[1] == self.strain_high_resnet.conv1.in_channels, f"x_high has wrong shape: {x_high.shape}"
-        assert x_fft.shape[1] == self.fft_resnet.conv1.in_channels, f"x_fft has wrong shape: {x_fft.shape}"
 
         low_out = self.strain_low_resnet(x_low)
         high_out = self.strain_high_resnet(x_high)

@@ -18,7 +18,6 @@ class MultimodalAframe(AframeBase):
         return self.model(x_low, x_high, x_fft)
 
     def train_step(self, batch: tuple) -> Tensor:
-        print(" training Step ~")
         # Unpack depending on number of elements
         if len(batch) == 4:
             X_low, X_high, X_fft, y = batch

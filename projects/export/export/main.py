@@ -114,12 +114,10 @@ def export(
 
     # load in the model graph
     logging.info("Initializing model graph")
-#UNCOMMENT BELOW FOR ACTUAL RUN
     with open_file(weights, "rb") as f:
         graph = nn = torch.jit.load(f, map_location="cpu")
 
 
-#UNCOMMENT ON ACTUAL RUN
     graph.eval()
     logging.info(f"Initialize:\n{nn}")
     # instantiate a model repository at the
@@ -140,7 +138,6 @@ def export(
 
     with open_file(batch_file, "rb") as f:
         batch = h5py.File(io.BytesIO(f.read()))
-        print("BATCH FFT SHAPE: ", batch["X_fft"].shape)
         if "X" in batch.keys():
             size = batch["X"].shape[2:]
         else:
@@ -174,6 +171,15 @@ def export(
     # the target inference platform
     # TODO: hardcoding these kwargs for now, but worth
     # thinking about a more robust way to handle this
+    kwargs = {}
+    if platform == qv.Platform.ONNX:
+        kwargs["opset_version"] = 13
+
+        # turn off graph optimization because of this error
+        # https://github.com/triton-inference-server/server/issues/3418
+        aframe.config.optimization.graph.level = -1
+    elif platform == qv.Platform.TENSORRT:
+        kwargs["use_fp16"] = False
 
     aframe.export_version(
         graph,
@@ -181,7 +187,10 @@ def export(
         output_names=["discriminator"],
         **kwargs,
     )
-    ensemble_name = "aframe-multistream"
+
+    # now try and create an ensemble that has a snapshotter
+    # at the front for streaming new data to
+    ensemble_name = "aframe-stream"
     try:
         # first see if we have an existing
         # ensemble with the given name
@@ -205,12 +214,12 @@ def export(
             preproc_instances=preproc_instances,
             streams_per_gpu=streams_per_gpu,
         )
-        print("Preprocessor output shape:", whitened_fft.shape)
-        print("Model expected shape:", aframe.inputs["whitened_fft"].shape)
         ensemble.pipe(whitened_low, aframe.inputs["whitened_low"])
         ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])
         ensemble.pipe(whitened_fft, aframe.inputs["whitened_fft"])
 
+        # export the ensemble model, which basically amounts
+        # to writing its config and creating an empty version entry
         ensemble.add_output(aframe.outputs["discriminator"])
         ensemble.export_version(None)
     else:

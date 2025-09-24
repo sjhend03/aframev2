@@ -97,96 +97,94 @@ class PsdEstimator(torch.nn.Module):
 
 
 class BatchWhitener(torch.nn.Module):
-        def __init__(
-                self,
-                kernel_length: float,
-                sample_rate: float,
-                inference_sampling_rate: float,
-                batch_size: int,
-                fduration: float,
-                fftlength: float,
-                augmentor: Optional[Callable] = None,
-                highpass: Optional[float] = None,
-                lowpass: Optional[float] = None,
-                return_whitened: bool = False,
-                ) -> None:
-            super().__init__()
-            self.stride_size = int(sample_rate / inference_sampling_rate)
-            self.kernel_size = int(kernel_length * sample_rate)
-            self.augmentor = augmentor
-            self.return_whitened = return_whitened
-            self.highpass = highpass
-            self.lowpass = lowpass
-            self.fftlength = fftlength
-            self.n_fft = int(fftlength * sample_rate)
+    """Calculate the PSDs and whiten an entire batch of kernels at once"""
+    def __init__(
+            self,
+            kernel_length: float,
+            sample_rate: float,
+            inference_sampling_rate: float,
+            batch_size: int,
+            fduration: float,
+            fftlength: float,
+            augmentor: Optional[Callable] = None,
+            highpass: Optional[float] = None,
+            lowpass: Optional[float] = None,
+            return_whitened: bool = False,
+            ) -> None:
+        super().__init__()
+        self.stride_size = int(sample_rate / inference_sampling_rate)
+        self.kernel_size = int(kernel_length * sample_rate)
+        self.augmentor = augmentor
+        self.return_whitened = return_whitened
+        self.highpass = highpass
+        self.lowpass = lowpass
+        self.fftlength = fftlength
+        self.n_fft = int(fftlength * sample_rate)
 
-            strides = (batch_size - 1) * self.stride_size
-            fsize = int(fduration * sample_rate)
-            size = strides + self.kernel_size + fsize
-            length = size / sample_rate
-            self.psd_estimator = PsdEstimator(
-                    length,
-                    sample_rate,
-                    fftlength=fftlength,
-                    overlap=None,
-                    average="median",
-                    fast=highpass is not None,
-                    )
-            self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
-
-            freqs = torch.fft.rfftfreq(self.n_fft, d=1 / sample_rate)
-            #self.freq_mask = torch.ones_like(freqs, dtype=torch.bool)
-            #if highpass is not None:
-            #    self.freq_mask &= freqs > highpass
-
-
-        def forward(self, x: Tensor):
-            if x.ndim == 3:
-                num_channels = x.size(1)
-            elif x.ndim == 2:
-                num_channels = x.size(0)
-            else:
-                raise ValueError(f"Unexpected input shape: {x.shape}")
-
-
-            x, psd = self.psd_estimator(x)
-            whitened = self.whitener(x, psd)
-            whitened_low = self.whitener(x, psd, highpass=self.highpass, lowpass=self.lowpass)
-            whitened_high = self.whitener(x, psd, highpass=self.lowpass, lowpass=None)
-
-
-            x = x.float()
-
-
-            asd = psd**0.5
-            asd = asd.float()
-            asd *= 1e23
-
-            #inv_asd = inv_asd.repeat(x_fft.shape[0], 1, 1)
-
-            x = unfold_windows(x, self.kernel_size + 2048, self.stride_size)
-            x_low = unfold_windows(whitened_low, self.kernel_size, self.stride_size)
-            x_high = unfold_windows(whitened_high, self.kernel_size, self.stride_size)
-            #x = x.reshape(-1, num_channels, self.kernel_size)
-            print(f"x_low windows: {x_low.shape}")
-            print(f"x_high windows: {x_high.shape}")
-            print(f"x windows: {x.shape}")
-            x = x.reshape(-1, num_channels, self.kernel_size + 2048)
-            x_fft = torch.fft.rfft(x, n=self.n_fft, dim=-1)
-            num_freqs = x_fft.shape[-1]
-            if asd.shape[-1] != num_freqs:
-                asd = torch.nn.functional.interpolate(
-                    asd[None], size=(num_freqs,), mode="linear"
+        strides = (batch_size - 1) * self.stride_size
+        fsize = int(fduration * sample_rate)
+        size = strides + self.kernel_size + fsize
+        length = size / sample_rate
+        self.psd_estimator = PsdEstimator(
+                length,
+                sample_rate,
+                fftlength=fftlength,
+                overlap=None,
+                average="median",
+                fast=highpass is not None,
                 )
-            inv_asd = 1 / asd
-            inv_asd = inv_asd.repeat(x_fft.shape[0], 1, 1)
-            #x_fft = x_fft[:, :, self.freq_mask]
-            x_fft = torch.cat([x_fft.real, x_fft.imag, inv_asd], dim=1)
+        self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
+
+        freqs = torch.fft.rfftfreq(self.n_fft, d=1 / sample_rate)
+        self.freq_mask = torch.ones_like(freqs, dtype=torch.bool)
+        if highpass is not None:
+            self.freq_mask &= freqs > highpass
 
 
-            x_low = x_low.reshape(-1, num_channels, self.kernel_size)
-            x_high = x_high.reshape(-1, num_channels, self.kernel_size)
-            x_fft = x_fft.reshape(x_low.shape[0], -1, x_fft.shape[-1])
+    def forward(self, x: Tensor):
+        if x.ndim == 3:
+            num_channels = x.size(1)
+        elif x.ndim == 2:
+            num_channels = x.size(0)
+        else:
+            raise ValueError(f"Unexpected input shape: {x.shape}")
 
 
-            return x_low, x_high, x_fft
+        x, psd = self.psd_estimator(x)
+        whitened = self.whitener(x, psd)
+        whitened_low = self.whitener(x, psd, highpass=self.highpass, lowpass=self.lowpass)
+        whitened_high = self.whitener(x, psd, highpass=self.lowpass, lowpass=None)
+
+        x = x.float()
+
+        asd = psd**0.5
+        asd = asd.float()
+        asd *= 1e23
+
+        # unfold x and other inputs and then put into expected shape.
+        # Note that if x has both signal and background
+        # batch elements, they will be interleaved along
+        # the batch dimension after unfolding
+        x = unfold_windows(whitened, self.kernel_size, self.stride_size)
+        x_low = unfold_windows(whitened_low, self.kernel_size, self.stride_size)
+        x_high = unfold_windows(whitened_high, self.kernel_size, self.stride_size)
+        x = x.reshape(-1, num_channels, self.kernel_size)
+
+        x_fft = torch.fft.rfft(x, n=self.n_fft, dim=-1)
+        num_freqs = x_fft.shape[-1]
+        if asd.shape[-1] != num_freqs:
+            asd = torch.nn.functional.interpolate(
+                asd[None], size=(num_freqs,), mode="linear"
+            )
+        inv_asd = 1 / asd
+        inv_asd = inv_asd.repeat(x_fft.shape[0], 1, 1)
+        x_fft = x_fft[:, :, self.freq_mask]
+        x_fft = torch.cat([x_fft.real, x_fft.imag, inv_asd], dim=1)
+
+
+        x_low = x_low.reshape(-1, num_channels, self.kernel_size)
+        x_high = x_high.reshape(-1, num_channels, self.kernel_size)
+        x_fft = x_fft.reshape(x_low.shape[0], -1, x_fft.shape[-1])
+
+
+        return x_low, x_high, x_fft

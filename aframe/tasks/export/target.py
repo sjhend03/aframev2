@@ -16,7 +16,6 @@ class ModelRepositoryTarget(luigi.Target):
     def __init__(self, path, platform: str, version: int = -1):
         super().__init__()
         self.path = path
-        print("path:, ", self.path)
         self.version = version
         self.platform = platform
 
@@ -26,7 +25,6 @@ class ModelRepositoryTarget(luigi.Target):
         # currently only check `aframe` model for versions
         # since this is the most important
         version_dir = os.path.join(self.path, "aframe")
-        print("version_dir: ", version_dir)
         if not os.path.isdir(version_dir):
             return versions
 
@@ -57,7 +55,7 @@ class ModelRepositoryTarget(luigi.Target):
                 "config.pbtxt",
                 (version, [conventions[self.platform]]),
             ],
-            "aframe-multistream": ["config.pbtxt", (version, ["model.empty"])],
+            "aframe-stream": ["config.pbtxt", (version, ["model.empty"])],
             "preprocessor": ["config.pbtxt", (version, ["model.pt"])],
             "snapshotter": ["config.pbtxt", (version, ["model.onnx"])],
         }

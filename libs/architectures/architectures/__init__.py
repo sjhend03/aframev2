@@ -5,4 +5,3 @@ from .supervised import (
     SupervisedSpectrogramDomainResNet,
     SupervisedTimeDomainResNet,
 )
-from .concat import ConcatResNet
