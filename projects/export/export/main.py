@@ -181,7 +181,7 @@ def export(
         output_names=["discriminator"],
         **kwargs,
     )
-    ensemble_name = "aframe-multistream"
+    ensemble_name = "aframe-stream"
     try:
         # first see if we have an existing
         # ensemble with the given name

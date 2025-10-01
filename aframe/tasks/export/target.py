@@ -57,7 +57,7 @@ class ModelRepositoryTarget(luigi.Target):
                 "config.pbtxt",
                 (version, [conventions[self.platform]]),
             ],
-            "aframe-multistream": ["config.pbtxt", (version, ["model.empty"])],
+            "aframe-stream": ["config.pbtxt", (version, ["model.empty"])],
             "preprocessor": ["config.pbtxt", (version, ["model.pt"])],
             "snapshotter": ["config.pbtxt", (version, ["model.onnx"])],
         }
