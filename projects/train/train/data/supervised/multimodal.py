@@ -17,18 +17,35 @@ class MultimodalSupervisedAframeDataset(SupervisedAframeDataset):
     @torch.no_grad()
     def augment(self, X, waveforms):
         X, y, psds = super().augment(X, waveforms)
-            "mean =", psds.mean().item(), "std =", psds.std().item())
 
         psds = psds
         
-        X = self.whitener(X, psds)
+        X_whitened = self.whitener(X, psds)
         X_low = self.whitener(X, psds, highpass=self.hparams.highpass, lowpass=self.hparams.lowpass).float()
         X_high = self.whitener(X, psds, highpass=self.hparams.lowpass, lowpass=None).float()
 
-        X_fft = torch.fft.rfft(X, dim=-1)
-        asds = psds.sqrt() * 1e23
-        inv_asds = (1 / asds).float()
+        X_fft = torch.fft.rfft(X_whitened, dim=-1)
+        asds = psds**0.5
 
+        freqs = torch.fft.rfftfreq(X_whitened.shape[-1], d=1 / self.hparams.sample_rate)
+        num_freqs = len(freqs)
+
+        asds = torch.nn.functional.interpolate(
+            asds,
+            size=(num_freqs,),
+            mode="linear",
+        )
+        mask = torch.ones_like(freqs, dtype=torch.bool)
+        if self.hparams.highpass is not None:
+            mask &= freqs > self.hparams.highpass
+        #if self.hparams .lowpass is not None:
+        #    mask &= freqs < self.hparams.lowpass
+
+        asds = asds[:, :, mask]
+        asds *= 1e23
+        inv_asds = 1 / asds
+
+        X_fft = X_fft[:, :, mask]
         X_fft = torch.cat([X_fft.real, X_fft.imag, inv_asds], dim=1).float()
         if torch.isnan(X_low).any() or torch.isinf(X_low).any():
             raise ValueError("NaN or Inf in X_low")
@@ -62,20 +79,21 @@ class MultimodalSupervisedAframeDataset(SupervisedAframeDataset):
             X_bg, X_inj, psds = super().build_val_batches(background, signals)
 
             # Background: low/high-passed and FFT-processed
-            X_bg = self.whitener(X_bg, psds)
+            X_bg_whitened = self.whitener(X_bg, psds)
             X_bg_low = self.whitener(X_bg, psds, highpass=self.hparams.highpass, lowpass=self.hparams.lowpass).float()
             X_bg_high = self.whitener(X_bg, psds, highpass=self.hparams.lowpass, lowpass=None).float()
-            X_bg_fft = torch.fft.rfft(X_bg)
+            X_bg_fft = torch.fft.rfft(X_bg_whitened)
 
             # Foreground: process injected signals similarly
-            X_fg, X_fg_low, X_fg_high = [], []
+            X_fg_whitened, X_fg_low, X_fg_high = [], [], []
             for inj in X_inj:
                 X_fg_low.append(self.whitener(inj, psds, lowpass=self.hparams.lowpass, highpass=self.hparams.highpass).float())
                 X_fg_high.append(self.whitener(inj, psds, lowpass=None, highpass=self.hparams.lowpass).float())
-                X_fg.append(self.whitener(inj, psds))
+                X_fg_whitened.append(self.whitener(inj, psds))
             X_fg_low = torch.stack(X_fg_low)
             X_fg_high = torch.stack(X_fg_high)
-            X_fg_fft = torch.fft.rfft(X_inj)
+            X_fg_whitened = torch.stack(X_fg_whitened, dim=0)
+            X_fg_fft = torch.fft.rfft(X_fg_whitened)
             
             asds = psds**0.5
             asds *= 1e23

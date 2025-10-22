@@ -120,6 +120,7 @@ class BatchWhitener(torch.nn.Module):
         self.lowpass = lowpass
         self.fftlength = fftlength
         self.n_fft = int(fftlength * sample_rate)
+        self.sample_rate = sample_rate
 
         strides = (batch_size - 1) * self.stride_size
         fsize = int(fduration * sample_rate)
@@ -136,9 +137,13 @@ class BatchWhitener(torch.nn.Module):
         self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
 
         freqs = torch.fft.rfftfreq(self.n_fft, d=1 / sample_rate)
+        self.freqs = freqs
+        self.num_freqs = len(freqs)
         self.freq_mask = torch.ones_like(freqs, dtype=torch.bool)
         if highpass is not None:
             self.freq_mask &= freqs > highpass
+        # if lowpass is not None:
+        #     self.freq_mask &= freqs < lowpass
 
 
     def forward(self, x: Tensor):
@@ -157,9 +162,13 @@ class BatchWhitener(torch.nn.Module):
 
         x = x.float()
 
-        asd = psd**0.5
-        asd = asd.float()
-        asd *= 1e23
+        asds = psd**0.5
+        asds = asds.float()
+        asds *= 1e23
+
+        # ensure asd is 3D so mask works even if asd is never interpolated
+        if asds.ndim ==2:
+            asds = asds.unsqueeze(0)
 
         # unfold x and other inputs and then put into expected shape.
         # Note that if x has both signal and background
@@ -170,15 +179,19 @@ class BatchWhitener(torch.nn.Module):
         x_high = unfold_windows(whitened_high, self.kernel_size, self.stride_size)
         x = x.reshape(-1, num_channels, self.kernel_size)
 
-        x_fft = torch.fft.rfft(x, n=self.n_fft, dim=-1)
-        num_freqs = x_fft.shape[-1]
-        if asd.shape[-1] != num_freqs:
-            asd = torch.nn.functional.interpolate(
-                asd[None], size=(num_freqs,), mode="linear"
-            )
-        inv_asd = 1 / asd
+        x_fft = torch.fft.rfft(whitened, dim=-1)
+
+        asds = torch.nn.functional.interpolate(
+            asds,
+            size=(self.num_freqs,), 
+            mode="linear", 
+        )
+
+        asds = asds[:, :, self.freq_mask]
+        inv_asd = 1 / asds
         inv_asd = inv_asd.repeat(x_fft.shape[0], 1, 1)
-        x_fft = x_fft[:, :, self.freq_mask]
+        x_fft = x_fft[..., self.freq_mask]
+
         x_fft = torch.cat([x_fft.real, x_fft.imag, inv_asd], dim=1)
 
 

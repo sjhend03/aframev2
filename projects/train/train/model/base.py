@@ -199,3 +199,30 @@ class AframeBase(pl.LightningModule):
         )
         scheduler_config = {"scheduler": scheduler, "interval": "step"}
         return {"optimizer": optimizer, "lr_scheduler": scheduler_config}
+
+    # Hotfix to keep training
+    # In AframeBase
+    def lr_scheduler_step(self, scheduler, *args, **kwargs):
+        # Let Lightning call us each optimizer step
+        # If the scheduler is a OneCycleLR that's out of runway, stop stepping.
+        total = getattr(scheduler, "total_size", None)
+        last_epoch = getattr(scheduler, "last_epoch", None)
+
+        # Some torch versions store _total_size; be defensive:
+        if total is None:
+            total = getattr(scheduler, "_total_size", None)
+
+        if total is not None and last_epoch is not None and last_epoch >= (int(total) - 1):
+            # We've reached the end of the restored schedule; keep current LR.
+            return
+
+        # Otherwise step as usual
+        try:
+            scheduler.step()
+        except ValueError as e:
+            # Final safety net: if PyTorch still complains, swallow only the "tried to step" case.
+            msg = str(e)
+            if "Tried to step" in msg and "total steps" in msg:
+                return
+            raise
+

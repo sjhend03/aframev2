@@ -31,7 +31,7 @@ class WandbSaveConfig(pl.cli.SaveConfigCallback):
         if stage == "fit" and wandb_logger is not None:
             # pop off unecessary trainer args
             config = self.config.as_dict()
-            config.pop("trainer")
+            config.pop("trainer", None)
             wandb_logger.experiment.config.update(config)
 
 
@@ -39,17 +39,58 @@ class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
     def on_train_end(self, trainer, pl_module):
         if trainer.global_rank != 0:
             return
+
         torch.cuda.empty_cache()
+
+        # Recreate LightningModule from the best ckpt
         module = pl_module.__class__.load_from_checkpoint(
             self.best_model_path, arch=pl_module.model, metric=pl_module.metric
         )
+        module.eval()
+        module.to("cpu")
+        dm = trainer.datamodule
 
         device = pl_module.device
-        [X], waveforms = next(iter(trainer.train_dataloader))
-        X = X.to(device)
-        X_low, X_high, X_fft, y = trainer.datamodule.augment(X, waveforms)
-                
-        trace = torch.jit.trace(module.model.to("cpu"), X_low.to("cpu"), X_high.to("cpu"), X_fft.to("cpu"))
+
+        batch = next(iter(trainer.train_dataloader))
+
+        if hasattr(dm, "augment"): # multimodal model
+            if getattr(dm, "waveforms_from_disk", False):
+                [X], waveforms = batch
+                waveforms = dm.slice_waveforms(waveforms)
+            else:
+                [X], waveforms = batch
+                waveforms = dm.slice_waveforms(waveforms)
+
+            X = X.to(pl_module.device)
+            X_low, X_high, X_fft, _y = dm.augment(X, waveforms)
+            
+            X_low_cpu  = X_low.detach().to("cpu")
+            X_high_cpu = X_high.detach().to("cpu")
+            X_fft_cpu  = X_fft.detach().to("cpu") 
+            example_inputs = (X_low_cpu, X_high_cpu, X_fft_cpu)
+
+        else: # single-input path
+            if getattr(dm, "waveforms_from_disk", False):
+                [X], waveforms = batch
+                X = X.to(pl_module.device)
+                waveforms = waveforms.to(pl_module.device)
+                X, _y = dm.inject(X, waveforms)
+            else:
+                [X] = batch
+                X = X.to(pl_module.device)
+                X, _y = dm.inject(X)
+
+            if isinstance(X, tuple):
+                example_inputs = tuple(t.detach().to("cpu") for t in X)
+            else:
+                example_inputs = X.detach().to("cpu")
+
+        trace = torch.jit.trace(
+            module.model,    
+            example_inputs,
+            strict=False 
+        )
 
         save_dir = trainer.logger.save_dir
         if save_dir.startswith("s3://"):
@@ -144,4 +185,4 @@ class GradientTracker(Callback):
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         norms = grad_norm(pl_module, norm_type=self.norm_type)
         total_norm = norms[f"grad_{float(self.norm_type)}_norm_total"]
-        self.log(f"grad_norm_{self.norm_type}", total_norm)
+        pl_module.log(f"grad_norm_{self.norm_type}", total_norm)

@@ -19,17 +19,19 @@ class MultimodalAframe(AframeBase):
 
     def train_step(self, batch: tuple) -> Tensor:
         # Unpack depending on number of elements
-        if len(batch) == 4:
-            X_low, X_high, X_fft, y = batch
-        else:
+        if len(batch) != 4:
             raise ValueError(f"Unexpected batch format in train_step: {len(batch)} elements")
+        
+        X_low, X_high, X_fft, y = batch
 
-        y_hat = self((X_low, X_high, X_fft))
-        return torch.nn.functional.binary_cross_entropy_with_logits(y_hat, y)
+        y_hat = self(X_low, X_high, X_fft).squeeze(-1)
+        # Match shape of y_hat
+        y = y.float().view_as(y_hat)
+        return F.binary_cross_entropy_with_logits(y_hat, y)
 
     def score(self, X):
         X_low, X_high, X_fft = X
-        return self.model(X_low, X_high, X_fft)
+        return self.model(X_low, X_high, X_fft).squeeze(-1)
 
     def validation_step(self, batch, batch_idx):
         try:
@@ -42,13 +44,17 @@ class MultimodalAframe(AframeBase):
         # Score background
         y_bg = self.score(X_bg)
 
-        # Score injected signals (num_views, batch, ...)
-        num_views, batch, *_ = X_inj[0].shape  # assume all modalities same shape
-        X_inj = tuple(x.view(num_views * batch, *x.shape[2:]) for x in X_inj)
-        y_fg = self.score(X_inj)
-        y_fg = y_fg.view(num_views, batch).mean(0)
+        # Score injected signals
+        x0 = X_inj[0]
+        if x0.ndim >= 4:
+            V, B = x0.shape[:2]
+            x_flat = tuple(x.reshape(V * B, *x.shape[2:]) for x in X_inj)
+            y_fg = self.score(x_flat).view(V, B).mean(0)
+        else:
+            y_fg = self.score(X_inj)
 
-        self.metric.update(shift, y_bg, y_fg)
+        shift_val = float(shift) if not isinstance(shift, float) else shift
+        self.metric.update(shift_val, y_bg, y_fg)
 
         self.log(
             "valid_auroc",
