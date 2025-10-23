@@ -121,6 +121,8 @@ class BatchWhitener(torch.nn.Module):
         self.fftlength = fftlength
         self.n_fft = int(fftlength * sample_rate)
         self.sample_rate = sample_rate
+        self.n_fft_psd = int(fftlength * sample_rate)
+        self.feature_nfft = self.kernel_size
 
         strides = (batch_size - 1) * self.stride_size
         fsize = int(fduration * sample_rate)
@@ -136,15 +138,15 @@ class BatchWhitener(torch.nn.Module):
                 )
         self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
 
-        freqs = torch.fft.rfftfreq(self.n_fft, d=1 / sample_rate)
-        self.freqs = freqs
-        self.num_freqs = len(freqs)
+        freqs = torch.fft.rfftfreq(self.feature_nfft, d=1 / sample_rate)
         self.freq_mask = torch.ones_like(freqs, dtype=torch.bool)
         if highpass is not None:
             self.freq_mask &= freqs > highpass
         # if lowpass is not None:
         #     self.freq_mask &= freqs < lowpass
-
+        self.freqs = freqs
+        self.freq_mask = self.freq_mask
+        self.num_freqs = int(freqs.numel())
 
     def forward(self, x: Tensor):
         if x.ndim == 3:
@@ -179,7 +181,15 @@ class BatchWhitener(torch.nn.Module):
         x_high = unfold_windows(whitened_high, self.kernel_size, self.stride_size)
         x = x.reshape(-1, num_channels, self.kernel_size)
 
-        x_fft = torch.fft.rfft(whitened, dim=-1)
+        x_fft = torch.fft.rfft(x, n=self.feature_nfft, dim=-1)
+        F_expected = self.num_freqs
+        F_actual   = x_fft.shape[-1]
+        if F_actual != F_expected:
+            raise ValueError(
+                f"FFT bin mismatch: got F={F_actual} from rfft, expected {F_expected} "
+                f"(kernel_size={self.kernel_size}, n_fft={self.n_fft}). "
+                "Ensure fftlength*sample_rate matches the intended kernel-length FFT."
+            )
 
         asds = torch.nn.functional.interpolate(
             asds,

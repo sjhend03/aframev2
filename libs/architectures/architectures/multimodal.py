@@ -9,9 +9,11 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
     def __init__(
         self,
         num_ifos: int,
-        time_classes: int,
+        low_time_classes: int,
+        high_time_classes: int,
         freq_classes: int,
-        time_layers: list[int],
+        low_time_layers: list[int],
+        high_time_layers: list[int],
         freq_layers: list[int],
         time_kernel_size: int = 3,
         freq_kernel_size: int = 3,
@@ -27,8 +29,8 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
         # Time-domain ResNets
         self.strain_low_resnet = ResNet1D(
             in_channels=num_ifos,
-            layers=time_layers,
-            classes=time_classes,
+            layers=low_time_layers,
+            classes=low_time_classes,
             kernel_size=time_kernel_size,
             zero_init_residual=zero_init_residual,
             groups=groups,
@@ -39,8 +41,8 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
 
         self.strain_high_resnet = ResNet1D(
             in_channels=num_ifos,
-            layers=time_layers,
-            classes=time_classes,
+            layers=high_time_layers,
+            classes=high_time_classes,
             kernel_size=time_kernel_size,
             zero_init_residual=zero_init_residual,
             groups=groups,
@@ -63,7 +65,7 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
             norm_layer=norm_layer,
         )
 
-        embed_dim = 2 * time_classes + freq_classes
+        embed_dim = high_time_classes * low_time_classes + freq_classes
         self.classifier = nn.Linear(embed_dim, 1)
 
     def forward(self, x_low: torch.Tensor, x_high: torch.Tensor, x_fft: torch.Tensor):
