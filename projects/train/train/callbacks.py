@@ -54,7 +54,7 @@ class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
 
         batch = next(iter(trainer.train_dataloader))
 
-        if hasattr(dm, "augment"): # multimodal model
+        if hasattr(dm, "augment"):  # multimodal model
             if getattr(dm, "waveforms_from_disk", False):
                 [X], waveforms = batch
                 waveforms = dm.slice_waveforms(waveforms)
@@ -64,13 +64,13 @@ class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
 
             X = X.to(pl_module.device)
             X_low, X_high, X_fft, _y = dm.augment(X, waveforms)
-            
-            X_low_cpu  = X_low.detach().to("cpu")
+
+            X_low_cpu = X_low.detach().to("cpu")
             X_high_cpu = X_high.detach().to("cpu")
-            X_fft_cpu  = X_fft.detach().to("cpu") 
+            X_fft_cpu = X_fft.detach().to("cpu")
             example_inputs = (X_low_cpu, X_high_cpu, X_fft_cpu)
 
-        else: # single-input path
+        else:  # single-input path
             if getattr(dm, "waveforms_from_disk", False):
                 [X], waveforms = batch
                 X = X.to(pl_module.device)
@@ -86,11 +86,7 @@ class ModelCheckpoint(pl.callbacks.ModelCheckpoint):
             else:
                 example_inputs = X.detach().to("cpu")
 
-        trace = torch.jit.trace(
-            module.model,    
-            example_inputs,
-            strict=False 
-        )
+        trace = torch.jit.trace(module.model, example_inputs, strict=False)
 
         save_dir = trainer.logger.save_dir
         if save_dir.startswith("s3://"):

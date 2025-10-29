@@ -212,7 +212,11 @@ class AframeBase(pl.LightningModule):
         if total is None:
             total = getattr(scheduler, "_total_size", None)
 
-        if total is not None and last_epoch is not None and last_epoch >= (int(total) - 1):
+        if (
+            total is not None
+            and last_epoch is not None
+            and last_epoch >= (int(total) - 1)
+        ):
             # We've reached the end of the restored schedule; keep current LR.
             return
 
@@ -225,4 +229,3 @@ class AframeBase(pl.LightningModule):
             if "Tried to step" in msg and "total steps" in msg:
                 return
             raise
-

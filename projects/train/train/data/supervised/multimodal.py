@@ -12,22 +12,33 @@ class MultimodalSupervisedAframeDataset(SupervisedAframeDataset):
         mute_prob: Optional[float] = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, swap_prob=swap_prob, mute_prob=mute_prob, **kwargs)
+        super().__init__(
+            *args, swap_prob=swap_prob, mute_prob=mute_prob, **kwargs
+        )
 
     @torch.no_grad()
     def augment(self, X, waveforms):
         X, y, psds = super().augment(X, waveforms)
 
         psds = psds
-        
+
         X_whitened = self.whitener(X, psds)
-        X_low = self.whitener(X, psds, highpass=self.hparams.highpass, lowpass=self.hparams.lowpass).float()
-        X_high = self.whitener(X, psds, highpass=self.hparams.lowpass, lowpass=None).float()
+        X_low = self.whitener(
+            X,
+            psds,
+            highpass=self.hparams.highpass,
+            lowpass=self.hparams.lowpass,
+        ).float()
+        X_high = self.whitener(
+            X, psds, highpass=self.hparams.lowpass, lowpass=None
+        ).float()
 
         X_fft = torch.fft.rfft(X_whitened, dim=-1)
         asds = psds**0.5
 
-        freqs = torch.fft.rfftfreq(X_whitened.shape[-1], d=1 / self.hparams.sample_rate)
+        freqs = torch.fft.rfftfreq(
+            X_whitened.shape[-1], d=1 / self.hparams.sample_rate
+        )
         num_freqs = len(freqs)
 
         asds = torch.nn.functional.interpolate(
@@ -38,7 +49,7 @@ class MultimodalSupervisedAframeDataset(SupervisedAframeDataset):
         mask = torch.ones_like(freqs, dtype=torch.bool)
         if self.hparams.highpass is not None:
             mask &= freqs > self.hparams.highpass
-        #if self.hparams .lowpass is not None:
+        # if self.hparams .lowpass is not None:
         #    mask &= freqs < self.hparams.lowpass
 
         asds = asds[:, :, mask]
@@ -80,43 +91,66 @@ class MultimodalSupervisedAframeDataset(SupervisedAframeDataset):
 
             # Background: low/high-passed and FFT-processed
             X_bg_whitened = self.whitener(X_bg, psds)
-            X_bg_low = self.whitener(X_bg, psds, highpass=self.hparams.highpass, lowpass=self.hparams.lowpass).float()
-            X_bg_high = self.whitener(X_bg, psds, highpass=self.hparams.lowpass, lowpass=None).float()
+            X_bg_low = self.whitener(
+                X_bg,
+                psds,
+                highpass=self.hparams.highpass,
+                lowpass=self.hparams.lowpass,
+            ).float()
+            X_bg_high = self.whitener(
+                X_bg, psds, highpass=self.hparams.lowpass, lowpass=None
+            ).float()
             X_bg_fft = torch.fft.rfft(X_bg_whitened)
 
             # Foreground: process injected signals similarly
             X_fg_whitened, X_fg_low, X_fg_high = [], [], []
             for inj in X_inj:
-                X_fg_low.append(self.whitener(inj, psds, lowpass=self.hparams.lowpass, highpass=self.hparams.highpass).float())
-                X_fg_high.append(self.whitener(inj, psds, lowpass=None, highpass=self.hparams.lowpass).float())
+                X_fg_low.append(
+                    self.whitener(
+                        inj,
+                        psds,
+                        lowpass=self.hparams.lowpass,
+                        highpass=self.hparams.highpass,
+                    ).float()
+                )
+                X_fg_high.append(
+                    self.whitener(
+                        inj, psds, lowpass=None, highpass=self.hparams.lowpass
+                    ).float()
+                )
                 X_fg_whitened.append(self.whitener(inj, psds))
             X_fg_low = torch.stack(X_fg_low)
             X_fg_high = torch.stack(X_fg_high)
             X_fg_whitened = torch.stack(X_fg_whitened, dim=0)
             X_fg_fft = torch.fft.rfft(X_fg_whitened)
-            
+
             asds = psds**0.5
             asds *= 1e23
             asds = asds.float()
             num_freqs = X_fg_fft.shape[-1]
             if asds.shape[-1] != num_freqs:
-                asds = F.interpolate(
-                    asds, size=(num_freqs,), mode="linear"
-                )
+                asds = F.interpolate(asds, size=(num_freqs,), mode="linear")
             inv_asds = 1 / asds
-            
-            X_bg_fft = torch.cat([X_bg_fft.real, X_bg_fft.imag, inv_asds], dim=1).float()
+
+            X_bg_fft = torch.cat(
+                [X_bg_fft.real, X_bg_fft.imag, inv_asds], dim=1
+            ).float()
             inv_asds = inv_asds.unsqueeze(0).repeat(5, 1, 1, 1)
-            X_fg_fft = torch.cat([X_fg_fft.real, X_fg_fft.imag, inv_asds], dim=2).float()
+            X_fg_fft = torch.cat(
+                [X_fg_fft.real, X_fg_fft.imag, inv_asds], dim=2
+            ).float()
 
             # Return data grouped into background and injected signal components
             return (
                 shift,
-                X_bg_low, X_bg_high, X_bg_fft,
-                X_fg_low, X_fg_high, X_fg_fft,
+                X_bg_low,
+                X_bg_high,
+                X_bg_fft,
+                X_fg_low,
+                X_fg_high,
+                X_fg_fft,
                 psds,
             )
 
         # Default: return batch unchanged
         return batch
-

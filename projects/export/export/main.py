@@ -117,7 +117,6 @@ def export(
     with open_file(weights, "rb") as f:
         graph = nn = torch.jit.load(f, map_location="cpu")
 
-
     graph.eval()
     logging.info(f"Initialize:\n{nn}")
     # instantiate a model repository at the
@@ -144,15 +143,15 @@ def export(
             size = None
         if "X_fft" in batch.keys():
             size_fft = batch["X_fft"].shape[-2:]
-        else: 
+        else:
             size_fft = None
         if "X_low" in batch.keys():
             size_low = batch["X_low"].shape[2:]
-        else: 
+        else:
             size_low = None
         if "X_high" in batch.keys():
             size_high = batch["X_high"].shape[2:]
-        else: 
+        else:
             size_high = None
 
     input_shape_dict = {}
@@ -199,20 +198,22 @@ def export(
         ensemble = repo.add(ensemble_name, platform=qv.Platform.ENSEMBLE)
         # If fft isn't specified, calculate default value
         fftlength = fftlength or kernel_length + fduration
-        whitened_low, whitened_high, whitened_fft = add_streaming_input_preprocessor(
-            ensemble,
-            aframe.inputs["whitened_low"],
-            psd_length=psd_length,
-            sample_rate=sample_rate,
-            kernel_length=kernel_length,
-            inference_sampling_rate=inference_sampling_rate,
-            fduration=fduration,
-            fftlength=fftlength,
-            q=q,
-            highpass=highpass,
-            lowpass=lowpass,
-            preproc_instances=preproc_instances,
-            streams_per_gpu=streams_per_gpu,
+        whitened_low, whitened_high, whitened_fft = (
+            add_streaming_input_preprocessor(
+                ensemble,
+                aframe.inputs["whitened_low"],
+                psd_length=psd_length,
+                sample_rate=sample_rate,
+                kernel_length=kernel_length,
+                inference_sampling_rate=inference_sampling_rate,
+                fduration=fduration,
+                fftlength=fftlength,
+                q=q,
+                highpass=highpass,
+                lowpass=lowpass,
+                preproc_instances=preproc_instances,
+                streams_per_gpu=streams_per_gpu,
+            )
         )
         ensemble.pipe(whitened_low, aframe.inputs["whitened_low"])
         ensemble.pipe(whitened_high, aframe.inputs["whitened_high"])

@@ -65,15 +65,15 @@ class MultimodalSupervisedArchitecture(SupervisedArchitecture):
             norm_layer=norm_layer,
         )
 
-        embed_dim = high_time_classes * low_time_classes + freq_classes
+        embed_dim = high_time_classes + low_time_classes + freq_classes
         self.classifier = nn.Linear(embed_dim, 1)
 
-    def forward(self, x_low: torch.Tensor, x_high: torch.Tensor, x_fft: torch.Tensor):
-
+    def forward(
+        self, x_low: torch.Tensor, x_high: torch.Tensor, x_fft: torch.Tensor
+    ):
         low_out = self.strain_low_resnet(x_low)
         high_out = self.strain_high_resnet(x_high)
         fft_out = self.fft_resnet(x_fft)
 
         features = torch.cat([low_out, high_out, fft_out], dim=-1)
         return self.classifier(features)
-

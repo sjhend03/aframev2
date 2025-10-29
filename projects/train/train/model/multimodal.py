@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 Tensor = torch.Tensor
 
+
 class MultimodalAframe(AframeBase):
     def __init__(
         self,
@@ -20,8 +21,10 @@ class MultimodalAframe(AframeBase):
     def train_step(self, batch: tuple) -> Tensor:
         # Unpack depending on number of elements
         if len(batch) != 4:
-            raise ValueError(f"Unexpected batch format in train_step: {len(batch)} elements")
-        
+            raise ValueError(
+                f"Unexpected batch format in train_step: {len(batch)} elements"
+            )
+
         X_low, X_high, X_fft, y = batch
 
         y_hat = self(X_low, X_high, X_fft).squeeze(-1)
@@ -37,7 +40,16 @@ class MultimodalAframe(AframeBase):
         try:
             shift, X_bg, X_inj = batch
         except ValueError:
-            shift, X_bg_low, X_bg_high, X_bg_fft, X_fg_low, X_fg_high, X_fg_fft, *_ = batch
+            (
+                shift,
+                X_bg_low,
+                X_bg_high,
+                X_bg_fft,
+                X_fg_low,
+                X_fg_high,
+                X_fg_fft,
+                *_,
+            ) = batch
             X_bg = (X_bg_low, X_bg_high, X_bg_fft)
             X_inj = (X_fg_low, X_fg_high, X_fg_fft)
 
@@ -63,4 +75,3 @@ class MultimodalAframe(AframeBase):
             on_epoch=True,
             sync_dist=True,
         )
-

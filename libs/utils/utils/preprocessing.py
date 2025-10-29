@@ -98,19 +98,20 @@ class PsdEstimator(torch.nn.Module):
 
 class BatchWhitener(torch.nn.Module):
     """Calculate the PSDs and whiten an entire batch of kernels at once"""
+
     def __init__(
-            self,
-            kernel_length: float,
-            sample_rate: float,
-            inference_sampling_rate: float,
-            batch_size: int,
-            fduration: float,
-            fftlength: float,
-            augmentor: Optional[Callable] = None,
-            highpass: Optional[float] = None,
-            lowpass: Optional[float] = None,
-            return_whitened: bool = False,
-            ) -> None:
+        self,
+        kernel_length: float,
+        sample_rate: float,
+        inference_sampling_rate: float,
+        batch_size: int,
+        fduration: float,
+        fftlength: float,
+        augmentor: Optional[Callable] = None,
+        highpass: Optional[float] = None,
+        lowpass: Optional[float] = None,
+        return_whitened: bool = False,
+    ) -> None:
         super().__init__()
         self.stride_size = int(sample_rate / inference_sampling_rate)
         self.kernel_size = int(kernel_length * sample_rate)
@@ -129,13 +130,13 @@ class BatchWhitener(torch.nn.Module):
         size = strides + self.kernel_size + fsize
         length = size / sample_rate
         self.psd_estimator = PsdEstimator(
-                length,
-                sample_rate,
-                fftlength=fftlength,
-                overlap=None,
-                average="median",
-                fast=highpass is not None,
-                )
+            length,
+            sample_rate,
+            fftlength=fftlength,
+            overlap=None,
+            average="median",
+            fast=highpass is not None,
+        )
         self.whitener = Whiten(fduration, sample_rate, highpass, lowpass)
 
         freqs = torch.fft.rfftfreq(self.feature_nfft, d=1 / sample_rate)
@@ -156,11 +157,14 @@ class BatchWhitener(torch.nn.Module):
         else:
             raise ValueError(f"Unexpected input shape: {x.shape}")
 
-
         x, psd = self.psd_estimator(x)
         whitened = self.whitener(x, psd)
-        whitened_low = self.whitener(x, psd, highpass=self.highpass, lowpass=self.lowpass)
-        whitened_high = self.whitener(x, psd, highpass=self.lowpass, lowpass=None)
+        whitened_low = self.whitener(
+            x, psd, highpass=self.highpass, lowpass=self.lowpass
+        )
+        whitened_high = self.whitener(
+            x, psd, highpass=self.lowpass, lowpass=None
+        )
 
         x = x.float()
 
@@ -169,7 +173,7 @@ class BatchWhitener(torch.nn.Module):
         asds *= 1e23
 
         # ensure asd is 3D so mask works even if asd is never interpolated
-        if asds.ndim ==2:
+        if asds.ndim == 2:
             asds = asds.unsqueeze(0)
 
         # unfold x and other inputs and then put into expected shape.
@@ -177,24 +181,30 @@ class BatchWhitener(torch.nn.Module):
         # batch elements, they will be interleaved along
         # the batch dimension after unfolding
         x = unfold_windows(whitened, self.kernel_size, self.stride_size)
-        x_low = unfold_windows(whitened_low, self.kernel_size, self.stride_size)
-        x_high = unfold_windows(whitened_high, self.kernel_size, self.stride_size)
+        x_low = unfold_windows(
+            whitened_low, self.kernel_size, self.stride_size
+        )
+        x_high = unfold_windows(
+            whitened_high, self.kernel_size, self.stride_size
+        )
         x = x.reshape(-1, num_channels, self.kernel_size)
 
         x_fft = torch.fft.rfft(x, n=self.feature_nfft, dim=-1)
         F_expected = self.num_freqs
-        F_actual   = x_fft.shape[-1]
+        F_actual = x_fft.shape[-1]
         if F_actual != F_expected:
             raise ValueError(
-                f"FFT bin mismatch: got F={F_actual} from rfft, expected {F_expected} "
+                f"""FFT bin mismatch: got F={F_actual} from rfft," \
+                 expected {F_expected}"""
                 f"(kernel_size={self.kernel_size}, n_fft={self.n_fft}). "
-                "Ensure fftlength*sample_rate matches the intended kernel-length FFT."
+                "Ensure fftlength*sample_rate matches the " \
+                "intended kernel-length FFT."
             )
 
         asds = torch.nn.functional.interpolate(
             asds,
-            size=(self.num_freqs,), 
-            mode="linear", 
+            size=(self.num_freqs,),
+            mode="linear",
         )
 
         asds = asds[:, :, self.freq_mask]
@@ -204,10 +214,8 @@ class BatchWhitener(torch.nn.Module):
 
         x_fft = torch.cat([x_fft.real, x_fft.imag, inv_asd], dim=1)
 
-
         x_low = x_low.reshape(-1, num_channels, self.kernel_size)
         x_high = x_high.reshape(-1, num_channels, self.kernel_size)
         x_fft = x_fft.reshape(x_low.shape[0], -1, x_fft.shape[-1])
-
 
         return x_low, x_high, x_fft
